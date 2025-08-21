@@ -1,169 +1,159 @@
-#include <bits/stdc++.h>
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <cassert>
+
 using namespace std;
 
-
-// Function to compute Euclidean distance between two points
-
-double dist(const vector<double> &p1, const vector<double> &p2) {
-    assert(p1.size() == p2.size());
-    double sum = 0;
-    for (int i = 0; i < p1.size(); i++) {
-        sum += ((p1[i] - p2[i]) * (p1[i] - p2[i]));
-    }
+// Helper: Euclidean distance
+double euclideanDistance(const vector<double>& a, const vector<double>& b) {
+    assert(a.size() == b.size());
+    double sum = 0.0;
+    for (size_t i = 0; i < a.size(); ++i)
+        sum += (a[i] - b[i]) * (a[i] - b[i]);
     return sqrt(sum);
 }
 
-
-// Generalized Hyperplane Tree Node structure
+// Node structure
 
 struct GHNode {
-    vector<double> p1, p2;                     // Pivots
-    vector<vector<double>> points;             // Points in leaf
-    GHNode* left = NULL;                       // Left child
-    GHNode* right = NULL;                      // Right child
-    bool isleaf = false;                       // Leaf flag
+    vector<double> p1; // First pivot
+    vector<double> p2; // Second pivot
+
+    vector<vector<double>> points; // Points at leaf node
+
+    unique_ptr<GHNode> left;
+    unique_ptr<GHNode> right;
+
+    bool isLeaf = false;
 };
 
+// Build GH Tree
 
-// Function to build GH Tree recursively
+unique_ptr<GHNode> buildGHTree(const vector<vector<double>>& points, int leafSize = 1) {
+    if (points.empty()) return nullptr;
 
-GHNode* build_tree(vector<vector<double>> &points, int leaf_size = 1) {
-    if (points.size() == 0) return NULL;
+    auto node = make_unique<GHNode>();
 
-    GHNode* node = new GHNode();
-
-    if (points.size() <= leaf_size) {
-        node->isleaf = true;
+    if (points.size() <= leafSize) {
         node->points = points;
+        node->isLeaf = true;
         return node;
     }
 
-    vector<vector<double>> left;
-    vector<vector<double>> right;
-
+    // Pick first point as pivot 1
     node->p1 = points[0];
 
-    int i = 1;
-    while (i < points.size() && points[i] == points[0]) i++;
-
+    // Pick pivot 2: find first different point
+    size_t i = 1;
+    while (i < points.size() && points[i] == node->p1) i++;
     if (i == points.size()) {
-        node->isleaf = true;
+        // All points identical → make leaf
         node->points = points;
-        return node;
-    } else {
-        node->p2 = points[i];
-    }
-
-    // Partition the points based on distance to pivots
-    for (auto pts : points) {
-        if (dist(pts, node->p1) < dist(pts, node->p2))
-            left.push_back(pts);
-        else
-            right.push_back(pts);
-    }
-
-    // Degenerate case: if one side is empty, stop splitting
-    if (left.size() == 0 || right.size() == 0) {
-        node->points = points;
-        node->isleaf = true;
+        node->isLeaf = true;
         return node;
     }
+    node->p2 = points[i];
 
-    // Recurse for both sides
-    node->left = build_tree(left);
-    node->right = build_tree(right);
+    // Partition points by hyperplane
+    vector<vector<double>> leftSet, rightSet;
+    for (const auto& pt : points) {
+        double d1 = euclideanDistance(pt, node->p1);
+        double d2 = euclideanDistance(pt, node->p2);
+        if (d1 < d2) leftSet.push_back(pt);
+        else rightSet.push_back(pt);
+    }
+
+    // Degenerate split check: if one side empty, stop splitting
+    if (leftSet.empty() || rightSet.empty()) {
+        node->points = points;
+        node->isLeaf = true;
+        return node;
+    }
+
+    node->left = buildGHTree(leftSet, leafSize);
+    node->right = buildGHTree(rightSet, leafSize);
 
     return node;
 }
 
+// Search GH Tree for nearest neighbor
 
-// Function to search for nearest neighbor in GH Tree
+void searchGHTree(
+    GHNode* node,
+    const vector<double>& query,
+    vector<double>& bestPoint,
+    double& bestDist
+) {
+    if (!node) return;
 
-void GHsearch(double &best_dist, vector<double> &nearest_pt, GHNode* root, vector<double> &query) {
-    if (!root) return;
-
-    if (root->isleaf) {
-        for (auto pts : root->points) {
-            double d = dist(query, pts);
-            if (d < best_dist) {
-                nearest_pt = pts;
-                best_dist = d;
+    if (node->isLeaf) {
+        for (const auto& pt : node->points) {
+            double d = euclideanDistance(query, pt);
+            if (d < bestDist) {
+                bestDist = d;
+                bestPoint = pt;
             }
         }
         return;
     }
 
-    double d_p1 = dist(query, root->p1);
-    double d_p2 = dist(query, root->p2);
+    double d_p1 = euclideanDistance(query, node->p1);
+    double d_p2 = euclideanDistance(query, node->p2);
 
-    GHNode* near = (d_p1 < d_p2) ? root->left : root->right;
-    GHNode* far  = (d_p1 < d_p2) ? root->right : root->left;
+    GHNode* nearChild = (d_p1 < d_p2) ? node->left.get() : node->right.get();
+    GHNode* farChild  = (d_p1 < d_p2) ? node->right.get() : node->left.get();
 
-    double d = abs(d_p1 - d_p2);
+    // --- Correct pruning condition (with 1/2 factor) ---
+    double margin = fabs(d_p1 - d_p2);
 
-    GHsearch(best_dist, nearest_pt, near, query);
+    searchGHTree(nearChild, query, bestPoint, bestDist);
 
-    if (d < best_dist) {
-        GHsearch(best_dist, nearest_pt, far, query);
+    if (0.5 * margin < bestDist) {
+        searchGHTree(farChild, query, bestPoint, bestDist);
     }
 }
 
 
-// Function to deallocate GH Tree
-
-void free_tree(GHNode* node) {
-    if (!node) return;
-    free_tree(node->left);
-    free_tree(node->right);
-    delete node;
-}
-
-
-// Main function
+// Main
 
 int main() {
-    int num_points;
-    int dimension;
-
-    cout << "Enter No. of Points:" << endl;
-    cin >> num_points;
-
-    cout << "Enter the Dimension of the points:" << endl;
+    int numPoints, dimension;
+    cout << "Enter number of points: ";
+    cin >> numPoints;
+    cout << "Enter dimension: ";
     cin >> dimension;
 
-    vector<vector<double>> points(num_points, vector<double>(dimension));
-    for (int i = 0; i < num_points; i++) {
-        cout << "Enter point no. " << i + 1 << endl;
-        for (int j = 0; j < dimension; j++) {
+    vector<vector<double>> points(numPoints, vector<double>(dimension));
+    cout << "Enter each point as " << dimension << " coordinates:\n";
+    for (int i = 0; i < numPoints; ++i) {
+        cout << "Point " << i + 1 << ": ";
+        for (int j = 0; j < dimension; ++j) {
             cin >> points[i][j];
         }
     }
-    
-    if (points.empty()) {
-    cout << "No points provided. Exiting." << endl;
-    return 0;
-}
+
+    cout << "\nBuilding Generalized Hyperplane Tree...\n";
+    auto tree = buildGHTree(points);
 
     vector<double> query(dimension);
-    cout << "Enter Query point" << endl;
-    for (int i = 0; i < dimension; i++) {
-        cin >> query[i];
+    cout << "\nEnter query point: ";
+    for (int j = 0; j < dimension; ++j) {
+        cin >> query[j];
     }
 
-    GHNode* root = build_tree(points);
-    vector<double> nearest_pt;
-    double best_dist = numeric_limits<double>::max();
+    assert(query.size() == dimension);
 
-    GHsearch(best_dist, nearest_pt, root, query);
+    vector<double> nearestNeighbor;
+    double bestDist = numeric_limits<double>::max();
 
-    cout << "Nearest point to the Query point is:" << endl;
-    for (auto at : nearest_pt) {
-        cout << at << " ";
-    }
-    cout << endl;
+    searchGHTree(tree.get(), query, nearestNeighbor, bestDist);
 
-    cout << "Distance from the Nearest Neighbor to the Query point is:" << endl;
-    cout << best_dist;
+    cout << "\nNearest Neighbor: ";
+    for (double x : nearestNeighbor) cout << x << " ";
+    cout << "\nDistance: " << bestDist << endl;
 
-    free_tree(root);
+    return 0;
 }
