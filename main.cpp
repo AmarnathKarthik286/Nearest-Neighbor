@@ -1,9 +1,4 @@
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include <limits>
-#include <memory>
-#include <cassert>
+#include<bits/stdc++.h>
 
 using namespace std;
 
